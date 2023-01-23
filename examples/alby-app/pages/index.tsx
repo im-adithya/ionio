@@ -11,25 +11,30 @@ import { ionioSigner } from '../utils/signer';
 import { WsElectrumChainSource } from '../utils/electrum';
 
 
-const privateKeyHex = '826dd029c1e569e68e36543d182dd10475e50d33646a79a264a9837d8ccd32f5';
+const privateKeyHex = '1919134383f0d9d1bb38491fc58b16a87e448ce030ef671eb02518e91d62937a';
 const privateKey = noble.utils.hexToBytes(privateKeyHex);
+const useAlby = true;
 
 // window.alby.getPublicKey()
-const getPublicKey = () => {
+const getPublicKey = async () => {
+  if (useAlby) {
+    return noble.utils.hexToBytes(await global.window.liquid.getPublicKey());
+  }
+
   const xonlypub = noble.schnorr.getPublicKey(privateKey);
   return xonlypub;
 }
 // window.alby.signSchnorr()
 const signSchnorr = async (sigHash: Buffer): Promise<Buffer> => {
+  if (useAlby) {
+    const sigHashHex = noble.utils.bytesToHex(sigHash);
+    const signature = noble.utils.hexToBytes(await global.window.liquid.signSchnorr(sigHashHex));
+    return Buffer.from(signature);
+  }
   const sig = await noble.schnorr.sign(sigHash, privateKey);
   return Buffer.from(sig.buffer);
 }
 
-const signer: Signer = ionioSigner(
-  Buffer.from(getPublicKey().buffer),
-  signSchnorr,
-  networks.testnet.genesisBlockHash
-)
 
 
 
@@ -46,7 +51,7 @@ export default function Home() {
 
     const electrum = WsElectrumChainSource.fromNetwork(networks.testnet.name)
 
-    const pubkey = getPublicKey()
+    const pubkey = await getPublicKey();
     const pubkeyBuffer = Buffer.from(pubkey.buffer)
 
     const contract = new Contract(artifact as Artifact, [pubkeyBuffer], networks.testnet, { ecc, zkp: await secp256k1zkp() })
@@ -91,8 +96,16 @@ export default function Home() {
     // create instance of live contract funded on the blockchain
     const instance = contract.from(txFundID, txFundVout as number, prevout)
 
+    const pubKey = (await getPublicKey()).buffer;
+    
     // create a transaction that burns the contract
-    const tx = instance.functions.transfer(signer);
+    const tx = instance.functions.transfer(ionioSigner(
+      Buffer.from(pubKey),
+      signSchnorr,
+      networks.testnet.genesisBlockHash
+    ));
+
+    console.log(tx);
 
     // add the burn output where we burn all the coins minus 100 sats for the network fee
     tx.withOpReturn(100000 - 100, networks.testnet.assetHash)
